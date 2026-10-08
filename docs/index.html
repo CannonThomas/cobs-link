@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cobs-link — frame visualizer</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d; --fg: #e6edf3; --muted: #8b949e;
+    --data: #1f6feb; --zero: #da3633; --crc: #8957e5; --code: #d29922; --delim: #3fb950;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h1 span { color: var(--delim); }
+  p.lead { color: var(--muted); margin: 0 0 24px; max-width: 70ch; }
+  a { color: #58a6ff; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+           padding: 18px; margin-bottom: 16px; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  input[type=text] { flex: 1 1 280px; min-width: 0; background: var(--bg); color: var(--fg);
+           border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+           font: 15px var(--mono); }
+  input[type=text]:focus { outline: 2px solid var(--data); border-color: transparent; }
+  button { background: #21262d; color: var(--fg); border: 1px solid var(--line);
+           border-radius: 8px; padding: 9px 14px; font: inherit; cursor: pointer; }
+  button:hover { background: #30363d; }
+  button.on { background: var(--data); border-color: var(--data); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+       margin: 0 0 10px; font-weight: 600; }
+  h2 small { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; min-height: 44px; }
+  .row:last-child { margin-bottom: 0; }
+  .cell { width: 44px; border-radius: 7px; background: var(--data); text-align: center;
+          font: 600 14px/1 var(--mono); color: #fff; padding: 9px 0 7px; position: relative;
+          animation: pop .18s ease-out; }
+  @keyframes pop { from { transform: scale(.8); opacity: 0; } }
+  .cell.zero { background: var(--zero); } .cell.crc { background: var(--crc); }
+  .cell.code { background: var(--code); } .cell.delim { background: var(--delim); }
+  .cell.hit { outline: 2px solid #fff; outline-offset: 1px; }
+  .cell .ch { display: block; font-size: 10px; font-weight: 400; opacity: .75; margin-top: 5px; height: 10px; }
+  .bits { display: grid; grid-template-columns: repeat(8, 1fr); gap: 1px; padding: 6px 4px 0; }
+  .bit { height: 9px; border-radius: 2px; background: rgba(255,255,255,.22); cursor: pointer; }
+  .bit.one { background: rgba(255,255,255,.9); }
+  .bit.flipped { background: #ff7b72; box-shadow: 0 0 0 1px #fff; }
+  .bit:hover { transform: scaleY(1.5); }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 12px; margin-top: 14px; }
+  .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .result { display: flex; gap: 12px; align-items: baseline; padding: 10px 12px; border-radius: 8px;
+            margin-bottom: 8px; font-family: var(--mono); font-size: 14px; word-break: break-all; }
+  .result.ok { background: rgba(63,185,80,.14); border: 1px solid rgba(63,185,80,.5); }
+  .result.bad { background: rgba(218,54,51,.14); border: 1px solid rgba(218,54,51,.5); }
+  .result.wait { background: rgba(139,148,158,.12); border: 1px solid var(--line); }
+  .result b { flex: none; }
+  .stats { color: var(--muted); font-size: 13px; margin-top: 12px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>cobs<span>-</span>link</h1>
+  <p class="lead">
+    A framed, CRC-checked serial link for microcontrollers. Type a payload, watch it turn into
+    bytes on the wire, then <strong>click any bit in row 3 to corrupt it</strong> and see what
+    the receiver does. <a href="https://github.com/CannonThomas/cobs-link">Source on GitHub</a>
+  </p>
+
+  <div class="panel">
+    <div class="controls">
+      <input id="input" type="text" spellcheck="false" autocomplete="off" aria-label="Payload">
+      <button id="mode" title="Interpret the input as hex bytes">hex</button>
+      <button id="noise">Flip a random bit</button>
+      <button id="reset">Clear errors</button>
+    </div>
+    <p class="hint" id="hint"></p>
+  </div>
+
+  <div class="panel">
+    <h2>1 · Payload</h2>
+    <div class="row" id="r-payload"></div>
+    <h2>2 · Payload + CRC-16 <small id="crc-note"></small></h2>
+    <div class="row" id="r-body"></div>
+    <h2>3 · On the wire <small>COBS-encoded, then a 0x00 delimiter. Click bits to flip them.</small></h2>
+    <div class="row" id="r-wire"></div>
+    <div class="legend">
+      <span><i style="background:var(--data)"></i>data</span>
+      <span><i style="background:var(--zero)"></i>zero byte</span>
+      <span><i style="background:var(--crc)"></i>CRC</span>
+      <span><i style="background:var(--code)"></i>COBS code (distance to the next zero)</span>
+      <span><i style="background:var(--delim)"></i>frame delimiter</span>
+    </div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Receiver</h2>
+    <div id="rx"></div>
+  </div>
+</main>
+
+<script src="cobs_link.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const hex = (b) => b.toString(16).toUpperCase().padStart(2, "0");
+const printable = (b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : "");
+
+let hexMode = false;
+let flips = new Map();   // wire index -> xor mask
+let frame = [];
+
+function parseInput() {
+  const text = $("input").value;
+  if (!hexMode) return { bytes: [...new TextEncoder().encode(text)] };
+  const clean = text.replace(/0x/gi, "").replace(/[\s,]/g, "");
+  if (!/^([0-9a-f]{2})*$/i.test(clean)) return { bytes: [], error: "Hex mode expects pairs of hex digits, e.g. 48 69 00 21" };
+  return { bytes: (clean.match(/../g) || []).map((h) => parseInt(h, 16)) };
+}
+
+function makeCell(byte, cls, opts = {}) {
+  const el = document.createElement("div");
+  el.className = "cell " + cls + (opts.hit ? " hit" : "");
+  el.append(hex(byte));
+  const ch = document.createElement("span");
+  ch.className = "ch";
+  ch.textContent = opts.label ?? printable(byte);
+  el.append(ch);
+  if (opts.onBit) {
+    const bits = document.createElement("div");
+    bits.className = "bits";
+    for (let bit = 7; bit >= 0; bit--) {
+      const b = document.createElement("div");
+      b.className = "bit" + ((byte >> bit) & 1 ? " one" : "") + ((opts.mask >> bit) & 1 ? " flipped" : "");
+      b.title = `flip bit ${bit}`;
+      b.onclick = () => opts.onBit(bit);
+      bits.append(b);
+    }
+    el.append(bits);
+  }
+  return el;
+}
+
+function describe(payload) {
+  const text = payload.every((b) => b >= 0x20 && b < 0x7f) && payload.length
+    ? `"${String.fromCharCode(...payload)}"  ` : "";
+  return text + (payload.length ? payload.map(hex).join(" ") : "(empty payload)");
+}
+
+function render() {
+  const { bytes: payload, error } = parseInput();
+  $("hint").textContent = error || "";
+  const crc = CobsLink.crc16(payload);
+  const body = [...payload, crc >> 8, crc & 0xff];
+  const next = CobsLink.encodeFrame(payload);
+  if (next.join() !== frame.join()) flips = new Map();
+  frame = next;
+  const codes = CobsLink.codePositions(frame);
+  const wire = frame.map((b, i) => b ^ (flips.get(i) || 0));
+
+  $("r-payload").replaceChildren(...payload.map((b) => makeCell(b, b === 0 ? "zero" : "")));
+  $("r-body").replaceChildren(...body.map((b, i) =>
+    makeCell(b, i >= payload.length ? "crc" : b === 0 ? "zero" : "")));
+  $("crc-note").textContent = `CRC-16/GENIBUS = 0x${hex(crc >> 8)}${hex(crc & 0xff)}`;
+
+  // Walk the COBS blocks to find which wire bytes carry CRC rather than payload.
+  const isCrc = new Array(frame.length).fill(false);
+  for (let c = 0, bodyIdx = 0; c < frame.length - 1; c += frame[c]) {
+    for (let k = 1; k < frame[c]; k++) isCrc[c + k] = bodyIdx++ >= payload.length;
+    if (frame[c] !== 0xff) bodyIdx++;   // the zero this block stands in for
+  }
+  $("r-wire").replaceChildren(...wire.map((b, i) => {
+    const mask = flips.get(i) || 0;
+    const onBit = (bit) => { flips.set(i, mask ^ (1 << bit)); if (!flips.get(i)) flips.delete(i); render(); };
+    const opts = { onBit, mask, hit: !!mask };
+    if (i === frame.length - 1) return makeCell(b, "delim", { ...opts, label: "end" });
+    if (codes.has(i)) return makeCell(b, "code", { ...opts, label: "+" + frame[i] });
+    return makeCell(b, isCrc[i] ? "crc" : "", opts);
+  }));
+
+  $("stats").textContent =
+    `${payload.length} payload byte(s) → ${frame.length} on the wire ` +
+    `(${frame.length - payload.length} overhead: 2 CRC + ${frame.length - payload.length - 3} COBS + 1 delimiter)` +
+    (flips.size ? ` · ${[...flips.values()].reduce((n, m) => n + m.toString(2).replace(/0/g, "").length, 0)} bit(s) flipped` : "");
+
+  const results = CobsLink.receive(wire);
+  const rx = $("rx");
+  rx.replaceChildren();
+  if (!results.length) results.push({ status: "pending", detail: "nothing received" });
+  for (const r of results) {
+    const el = document.createElement("div");
+    const tag = document.createElement("b");
+    const msg = document.createElement("span");
+    if (r.status === "ok") {
+      const same = r.payload.join() === payload.join();
+      el.className = "result " + (same ? "ok" : "bad");
+      tag.textContent = same ? "✓ frame delivered" : "⚠ WRONG frame delivered";
+      msg.textContent = describe(r.payload);
+    } else if (r.status === "pending") {
+      el.className = "result wait";
+      tag.textContent = "… waiting";
+      msg.textContent = r.detail;
+    } else {
+      el.className = "result bad";
+      tag.textContent = r.status === "crc" ? "✗ rejected: CRC mismatch" : "✗ rejected: bad framing";
+      msg.textContent = r.detail;
+    }
+    el.append(tag, msg);
+    rx.append(el);
+  }
+}
+
+$("input").value = "Hi\u0000!";
+$("input").oninput = render;
+$("mode").onclick = () => {
+  const { bytes } = parseInput();
+  hexMode = !hexMode;
+  $("mode").classList.toggle("on", hexMode);
+  $("input").value = hexMode ? bytes.map(hex).join(" ") : new TextDecoder().decode(new Uint8Array(bytes));
+  render();
+};
+$("reset").onclick = () => { flips = new Map(); render(); };
+$("noise").onclick = () => {
+  const i = Math.floor(Math.random() * frame.length);
+  flips.set(i, (flips.get(i) || 0) ^ (1 << Math.floor(Math.random() * 8)));
+  if (!flips.get(i)) flips.delete(i);
+  render();
+};
+// start in hex mode so the embedded zero byte is visible
+$("mode").click();
+</script>
+</body>
+</html>

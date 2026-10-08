@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests (ASan + UBSan)
+        run: make test CC=${{ matrix.cc }}
+      - name: Cross-check against Python implementation
+        run: make cross CC=${{ matrix.cc }}
+      - name: Check the demo's JavaScript port
+        run: make js
+      - name: Noisy-channel example
+        run: make example CC=${{ matrix.cc }}
