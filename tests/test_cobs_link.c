@@ -46,7 +46,7 @@ static void expect_cobs(const uint8_t *raw, size_t raw_len,
     CHECK(memcmp(out, enc, enc_len) == 0);
     CHECK(cl_cobs_decode(enc, enc_len, back, sizeof back, &back_len) == CL_OK);
     CHECK(back_len == raw_len);
-    CHECK(memcmp(back, raw, raw_len) == 0);
+    CHECK(raw_len == 0 || memcmp(back, raw, raw_len) == 0);
 }
 
 /* Vectors from the original COBS paper / Wikipedia article. */
